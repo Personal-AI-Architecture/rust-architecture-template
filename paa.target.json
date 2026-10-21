@@ -1,0 +1,15 @@
+{
+  "name": "rust-architecture-template",
+  "language": "rust",
+  "root": ".",
+  "contracts": { "lock_file": "paa.lock.json" },
+  "commands": [
+    { "name": "typecheck", "command": "cargo clippy --all-targets --all-features -- -D warnings" },
+    { "name": "syntax", "command": "cargo fmt --all -- --check" },
+    { "name": "contract-checks", "command": "cargo run --bin paa-check" },
+    { "name": "unit", "command": "cargo test --lib" },
+    { "name": "integration", "command": "cargo test --test integration" },
+    { "name": "conformance", "command": "cargo test --test conformance" },
+    { "name": "acceptance", "command": "cargo run --bin paa-acceptance" }
+  ]
+}

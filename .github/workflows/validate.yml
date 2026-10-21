@@ -1,0 +1,22 @@
+name: Validate Rust PAA template
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  paa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Checkout pinned PAA contract source
+        uses: actions/checkout@v4
+        with:
+          repository: Personal-AI-Architecture/the-architecture
+          ref: 9565154901e57f184bfdd3cef5f23dd4014e2c03
+          path: paa-source
+      - name: Run native Rust suite and source drift gate
+        run: cargo run --bin paa-validate -- --source-checkout paa-source

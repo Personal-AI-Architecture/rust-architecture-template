@@ -1,0 +1,26 @@
+{
+  "repository": "https://github.com/Personal-AI-Architecture/the-architecture.git",
+  "ref": "main",
+  "commit": "9565154901e57f184bfdd3cef5f23dd4014e2c03",
+  "source_root": "vendor/paa-contracts",
+  "contract_files": [
+    "specs/openapi/gateway-api.yaml",
+    "specs/openapi/gateway-engine.yaml",
+    "specs/openapi/model-api.yaml",
+    "specs/schemas/configuration.json",
+    "specs/schemas/identity.json",
+    "specs/schemas/message.json",
+    "specs/schemas/policy.json",
+    "specs/schemas/tool-definition.json"
+  ],
+  "sha256": {
+    "specs/openapi/gateway-api.yaml": "75d19e080ac49cf753833df5ce40eeb7160bbc52a92270ad069b471a7ebc133f",
+    "specs/openapi/gateway-engine.yaml": "77c549c74c991547100df57c462bb11da5cc57abc3082414946179a6ffc79e98",
+    "specs/openapi/model-api.yaml": "fbeb040385a43eed2726a9834f8de655dda42659b5028cb1d4fb64ecf0d63a8b",
+    "specs/schemas/configuration.json": "8ebfdf8ceb428ee4c9f75dd9f77434dc5eaf90da2ec5ab01e3968c456a5d4f14",
+    "specs/schemas/identity.json": "0114d9ac9f8882454f49fc8063b9821c9d8c30270ce710d6372a172a1d07c757",
+    "specs/schemas/message.json": "618f9634e13fe4a50b4f9ea0e5b3a0ff45c22d560b5880df8548791c9d4c6467",
+    "specs/schemas/policy.json": "5fbb9c52100f85297bfa76237eff2ec9065b50b9de30d762472125343bc9ac28",
+    "specs/schemas/tool-definition.json": "47a4dedf4b3aec698e3a5746bc4b30a572fe70ab210397526837ac97d8a65a82"
+  }
+}
