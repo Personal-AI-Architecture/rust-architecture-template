@@ -22,7 +22,7 @@ fn canonical_route_streams_and_persists() {
     let response = gateway.handle(
         "POST",
         "/conversations/messages",
-        Some(serde_json::json!({"content":"hello"})),
+        Some(serde_json::json!({"content":[{"type":"text","text":"hello"}]})),
         &headers,
     );
     assert_eq!(response.status, 200);
@@ -30,6 +30,8 @@ fn canonical_route_streams_and_persists() {
     let id = response.headers["X-Conversation-ID"].as_str().unwrap();
     let detail = gateway.handle("GET", &format!("/conversations/{id}"), None, &Map::new());
     assert_eq!(detail.body["messages"].as_array().unwrap().len(), 2);
+    assert!(detail.body["messages"][0]["content"].is_array());
+    assert!(detail.body["messages"][1]["content"].is_array());
 }
 
 #[test]
@@ -53,7 +55,7 @@ fn openai_compatible_adapter_normalizes_sse() {
         .stream(&CompletionRequest {
             messages: vec![Message {
                 role: "user".into(),
-                content: "hello".into(),
+                content: vec![serde_json::json!({"type":"text","text":"hello"})],
                 ..Default::default()
             }],
             stream: true,

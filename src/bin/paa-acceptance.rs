@@ -58,7 +58,7 @@ fn run() -> Result<(), String> {
     let response = gateway.handle(
         "POST",
         "/conversations/messages",
-        Some(serde_json::json!({"content":"Hello"})),
+        Some(serde_json::json!({"content":[{"type":"text","text":"Hello"}]})),
         &headers,
     );
     if response.status != 200 || response.stream.len() < 2 {
