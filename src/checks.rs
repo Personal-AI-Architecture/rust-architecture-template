@@ -113,9 +113,9 @@ pub fn check_contracts(root: &Path, source_checkout: Option<&Path>) -> Vec<Strin
             }
         }
     }
-    let gateway = read(root, "specs/openapi/gateway-api.yaml");
-    let engine = read(root, "specs/openapi/gateway-engine.yaml");
-    let model = read(root, "specs/openapi/model-api.yaml");
+    let gateway = read(root, "contracts/openapi/gateway-api.yaml");
+    let engine = read(root, "contracts/openapi/gateway-engine.yaml");
+    let model = read(root, "contracts/openapi/model-api.yaml");
     for route in [
         "  /conversations/messages:",
         "  /conversations:",
@@ -140,12 +140,11 @@ pub fn check_contracts(root: &Path, source_checkout: Option<&Path>) -> Vec<Strin
         }
     }
     for marker in [
-        "/engine/chat:",
-        "EngineRequest:",
+        "/agent-loop/chat:",
+        "AgentLoopRequest:",
         "RequestMetadata:",
         "SSEStream:",
-        "X-Actor-ID",
-        "X-Actor-Permissions",
+        "auth_context:",
     ] {
         if !engine.contains(marker) {
             errors.push(format!("Gateway-Agent Loop contract is missing: {marker}."));
@@ -161,7 +160,7 @@ pub fn check_contracts(root: &Path, source_checkout: Option<&Path>) -> Vec<Strin
     }
     for (relative, required) in [
         (
-            "specs/schemas/configuration.json",
+            "contracts/schemas/configuration.json",
             vec![
                 "memory_root",
                 "provider_adapter",
@@ -170,17 +169,65 @@ pub fn check_contracts(root: &Path, source_checkout: Option<&Path>) -> Vec<Strin
             ],
         ),
         (
-            "specs/schemas/identity.json",
+            "contracts/schemas/identity.json",
             vec!["id", "type", "display_name", "status", "created"],
         ),
-        ("specs/schemas/message.json", vec!["role", "content"]),
+        ("contracts/schemas/message.json", vec!["role", "content"]),
         (
-            "specs/schemas/policy.json",
+            "contracts/schemas/policy.json",
             vec!["subject", "resource", "action", "effect"],
         ),
         (
-            "specs/schemas/tool-definition.json",
-            vec!["name", "description", "parameters"],
+            "contracts/schemas/tool-definition.json",
+            vec!["name", "description", "parameters", "source", "visibility"],
+        ),
+        (
+            "contracts/schemas/auth-context.json",
+            vec![
+                "actor",
+                "authentication_id",
+                "authenticated_at",
+                "correlation_id",
+            ],
+        ),
+        (
+            "contracts/schemas/authentication-result.json",
+            vec!["authenticated", "reason", "correlation_id"],
+        ),
+        (
+            "contracts/schemas/authorization-request.json",
+            vec!["actor_id", "resource", "action", "correlation_id"],
+        ),
+        (
+            "contracts/schemas/authorization-result.json",
+            vec!["allowed", "reason", "audit_id", "correlation_id"],
+        ),
+        (
+            "contracts/schemas/approval-request.json",
+            vec![
+                "request_id",
+                "tool_name",
+                "summary",
+                "status",
+                "created_at",
+                "expires_at",
+            ],
+        ),
+        (
+            "contracts/schemas/approval-decision.json",
+            vec!["request_id", "decision", "decided_at"],
+        ),
+        (
+            "contracts/schemas/audit-record.json",
+            vec![
+                "id",
+                "occurred_at",
+                "event",
+                "actor_id",
+                "action",
+                "result",
+                "correlation_id",
+            ],
         ),
     ] {
         let schema: Value = match serde_json::from_str(&read(root, relative)) {

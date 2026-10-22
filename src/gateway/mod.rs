@@ -30,6 +30,7 @@ pub struct Response {
 pub struct Gateway {
     pub engine: AgentLoop,
     pub memory: Store,
+    pub current_model: String,
     conversations: HashMap<String, Conversation>,
 }
 
@@ -38,6 +39,7 @@ impl Gateway {
         Self {
             engine,
             memory: memory.unwrap_or_else(|| Store::new(".paa-memory")),
+            current_model: "mock".into(),
             conversations: HashMap::new(),
         }
     }
@@ -95,8 +97,8 @@ impl Gateway {
         }
         let Some(content) = body
             .get("content")
-            .and_then(Value::as_str)
-            .filter(|text| !text.trim().is_empty())
+            .and_then(Value::as_array)
+            .filter(|parts| !parts.is_empty())
         else {
             return error_response(
                 400,
@@ -104,6 +106,16 @@ impl Gateway {
                 "Request must contain non-empty content and optional metadata.",
             );
         };
+        if content
+            .iter()
+            .any(|part| match part.get("type").and_then(Value::as_str) {
+                Some("text") => !part.get("text").is_some_and(Value::is_string),
+                Some("image" | "file") => !part.get("url").is_some_and(Value::is_string),
+                _ => true,
+            })
+        {
+            return error_response(400, "invalid_request", "Invalid content part.");
+        }
         let actor = crate::engine::header(headers, "X-Actor-ID");
         let permissions = crate::engine::header(headers, "X-Actor-Permissions");
         if actor.is_empty() || permissions.is_empty() {
@@ -138,7 +150,7 @@ impl Gateway {
         };
         let user = Message {
             role: "user".into(),
-            content: content.into(),
+            content: content.clone(),
             ..Default::default()
         };
         self.append(&conversation_id, user.clone(), Some(metadata.clone()));
@@ -162,23 +174,22 @@ impl Gateway {
         let request = EngineRequest {
             messages,
             metadata: EngineRequestMetadata {
-                correlation_id: correlation,
+                correlation_id: correlation.clone(),
                 conversation_id: conversation_id.clone(),
-                actor_id: actor,
-                actor_permissions: permissions
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(str::to_owned)
-                    .collect(),
+                client_context: metadata.clone(),
                 ..Default::default()
             },
+            model: self.current_model.clone(),
+            auth_context: serde_json::json!({
+                "actor": {"id": actor, "type": "owner", "display_name": "Owner", "status": "active", "created": timestamp()},
+                "authentication_id": id("authn"), "authenticated_at": timestamp(), "correlation_id": correlation,
+            }),
         };
         let mut stream = self.engine.run(&request, &request_headers);
         let text: String = stream
             .iter()
             .filter(|event| event.event == "text-delta")
-            .filter_map(|event| event.data.get("text").and_then(Value::as_str))
+            .filter_map(|event| event.data.get("content").and_then(Value::as_str))
             .collect();
         if let Some(done) = stream.iter_mut().find(|event| event.event == "done") {
             done.data
@@ -193,11 +204,16 @@ impl Gateway {
                 &conversation_id,
                 Message {
                     role: "assistant".into(),
-                    content: text,
+                    content: vec![serde_json::json!({"type":"text","text":text})],
                     ..Default::default()
                 },
                 None,
             );
+        }
+        for event in &mut stream {
+            event
+                .data
+                .insert("_event_type".into(), Value::String(event.event.clone()));
         }
         let mut response = sse_response(stream);
         response
@@ -251,13 +267,14 @@ impl Gateway {
     }
 }
 fn timestamp() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".into())
+    chrono::Utc::now().to_rfc3339()
 }
 fn id(prefix: &str) -> String {
-    format!("{prefix}_{}", timestamp())
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{prefix}_{nonce}")
 }
 fn headers(content_type: &str) -> Map<String, Value> {
     let mut result = Map::new();
@@ -273,10 +290,7 @@ fn json_response(status: u16, body: Value) -> Response {
     }
 }
 fn error_response(status: u16, code: &str, message: &str) -> Response {
-    json_response(
-        status,
-        serde_json::json!({"error":{"code":code,"message":message}}),
-    )
+    json_response(status, serde_json::json!({"code":code,"message":message}))
 }
 fn sse_response(stream: Vec<StreamEvent>) -> Response {
     let mut response = Response {

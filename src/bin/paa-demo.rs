@@ -18,7 +18,7 @@ fn main() {
     let response = gateway.handle(
         "POST",
         "/conversations/messages",
-        Some(serde_json::json!({"content":"Explain what PAA is."})),
+        Some(serde_json::json!({"content":[{"type":"text","text":"Explain what PAA is."}]})),
         &headers,
     );
     println!("PAA Rust template demo\n======================");

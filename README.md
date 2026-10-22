@@ -30,7 +30,7 @@ curl -N -X POST http://127.0.0.1:8000/conversations/messages \
   -H 'Content-Type: application/json' \
   -H 'X-Actor-ID: demo-user' \
   -H 'X-Actor-Permissions: memory:read,memory:write' \
-  -d '{"content":"Explain what PAA is."}'
+  -d '{"content":[{"type":"text","text":"Explain what PAA is."}]}'
 ```
 
 The demo server intentionally uses the Rust standard library for local HTTP
@@ -56,10 +56,12 @@ The included GitHub Actions workflow checks out the exact pinned PAA source and
 runs the same source-comparison gate, so contract drift is visible in CI.
 
 The template is pinned to PAA commit
-`9565154901e57f184bfdd3cef5f23dd4014e2c03`. `paa.lock.json` records that pin,
+`55707c2627e308eb3458e67db2644c458f95b236`. `paa.lock.json` records that pin,
 the contract file set, and SHA-256 digests. Contracts are mirrored under
-`specs/` for the starter's local examples and vendored under
+`contracts/` for the starter's local examples and vendored under
 `vendor/paa-contracts/` for reproducible validation.
+
+The executable checks cover this starter's text-message journey and declared component boundaries. Pinning the full PAA contract set does not by itself certify unimplemented product-specific paths such as production authentication, approval policy, or multimodal provider handling.
 
 ## PAA flow
 
@@ -86,7 +88,7 @@ Canonical routes demonstrated by the starter:
 | `GET` | `/conversations` | List conversations |
 | `GET` | `/conversations/{id}` | Read conversation history |
 
-The public message shape is deliberately small: `{ "content": "...", "metadata": {} }`.
+The public message shape uses content parts: `{ "content": [{"type": "text", "text": "..."}], "metadata": {} }`.
 Actor identity and permissions arrive through `X-Actor-ID` and
 `X-Actor-Permissions`; provider selection is runtime configuration, not a public
 engine request field.
@@ -103,7 +105,7 @@ src/config/      runtime configuration loading
 src/checks.rs    contract, boundary, and lock-in checks
 src/bin/         demo, server, native checks, acceptance, and full validation
 tests/           integration and PAA conformance tests
-specs/           local contract mirror
+contracts/           local contract mirror
 vendor/          pinned contract source used by validation
 ```
 

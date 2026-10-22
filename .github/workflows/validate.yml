@@ -16,7 +16,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Personal-AI-Architecture/the-architecture
-          ref: 9565154901e57f184bfdd3cef5f23dd4014e2c03
+          ref: main
+          fetch-depth: 0
           path: paa-source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Checkout shared PAA validator
+        uses: actions/checkout@v4
+        with:
+          repository: Personal-AI-Architecture/paa-conformance-validator
+          path: paa-validator
+      - name: Validate current PAA contracts and template commands
+        run: node paa-validator/bin/paa-validate.js --target paa.target.json --source-checkout paa-source --source-ref HEAD
       - name: Run native Rust suite and source drift gate
         run: cargo run --bin paa-validate -- --source-checkout paa-source

@@ -11,8 +11,8 @@ pub struct Entry {
     pub conversation_id: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub role: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub content: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub content: Vec<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Map<String, Value>>,
 }

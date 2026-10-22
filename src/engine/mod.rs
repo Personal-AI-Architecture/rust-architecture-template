@@ -9,22 +9,30 @@ impl AgentLoop {
     pub fn new(adapter: Box<dyn ModelAdapter>, tools: Vec<crate::types::ToolDefinition>) -> Self {
         Self { adapter, tools }
     }
-    pub fn run(&self, request: &EngineRequest, headers: &Map<String, Value>) -> Vec<StreamEvent> {
+    pub fn run(&self, request: &EngineRequest, _headers: &Map<String, Value>) -> Vec<StreamEvent> {
         if request.metadata.correlation_id.trim().is_empty() {
             return vec![error_event("provider_error", "Missing correlation_id.")];
         }
-        if header(headers, "X-Actor-ID").is_empty()
-            || header(headers, "X-Actor-Permissions").is_empty()
+        if request.auth_context["actor"]["id"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+            || request.auth_context["correlation_id"].as_str()
+                != Some(request.metadata.correlation_id.as_str())
         {
             return vec![error_event(
                 "provider_error",
-                "Missing required actor headers.",
+                "Missing authenticated actor context.",
             )];
+        }
+        if request.model.is_empty() {
+            return vec![error_event("invalid_request", "Missing selected model.")];
         }
         let completion = crate::types::CompletionRequest {
             messages: request.messages.clone(),
             tools: self.tools.clone(),
             stream: true,
+            model: request.model.clone(),
             ..Default::default()
         };
         let chunks = match self.adapter.stream(&completion) {
@@ -42,7 +50,7 @@ impl AgentLoop {
                         .filter(|text| !text.is_empty())
                         .map(|text| {
                             let mut d = Map::new();
-                            d.insert("text".into(), Value::String(text.into()));
+                            d.insert("content".into(), Value::String(text.into()));
                             StreamEvent {
                                 event: "text-delta".into(),
                                 data: d,

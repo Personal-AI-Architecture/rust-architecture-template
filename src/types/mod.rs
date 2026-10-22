@@ -14,7 +14,7 @@ pub struct ToolCall {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
-    pub content: String,
+    pub content: Vec<Value>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
     #[serde(default)]
@@ -58,6 +58,8 @@ pub struct EngineRequestMetadata {
 pub struct EngineRequest {
     pub messages: Vec<Message>,
     pub metadata: EngineRequestMetadata,
+    pub model: String,
+    pub auth_context: Value,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
