@@ -2,7 +2,7 @@ mod mock;
 mod openai_compatible;
 
 pub use mock::MockAdapter;
-pub use openai_compatible::OpenAiCompatibleAdapter;
+pub use openai_compatible::{OpenAiCompatibleAdapter, ProviderProfile};
 
 use crate::types::ModelAdapter;
 

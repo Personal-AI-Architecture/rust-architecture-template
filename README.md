@@ -5,6 +5,11 @@ implementation. It demonstrates the public Gateway, Agent Loop, model-adapter,
 memory, streaming, configuration, and contract-validation boundaries in code
 you can read and replace.
 
+The current contract checks cover per-request model and provider selection,
+provider-profile routing, saved reply provenance, context limits, and notices
+for omitted complete turns. This starter's small text journey is not a full
+implementation of every PAA tool and product conformance case.
+
 This is an educational and development template. It uses a deterministic mock
 adapter by default, so the demo and tests run offline. The included
 OpenAI-compatible adapter supports HTTPS and streamed responses; add your
@@ -56,7 +61,7 @@ The included GitHub Actions workflow checks out the exact pinned PAA source and
 runs the same source-comparison gate, so contract drift is visible in CI.
 
 The template is pinned to PAA commit
-`55707c2627e308eb3458e67db2644c458f95b236`. `paa.lock.json` records that pin,
+`28e9a275a0f5e062aa4452892e9ec70644f88c69`. `paa.lock.json` records that pin,
 the contract file set, and SHA-256 digests. Contracts are mirrored under
 `contracts/` for the starter's local examples and vendored under
 `vendor/paa-contracts/` for reproducible validation.

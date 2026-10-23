@@ -1,41 +1,70 @@
 use crate::types::{CompletionRequest, Message, ModelAdapter, ModelStreamChunk};
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+
+#[derive(Clone, Debug, Default)]
+pub struct ProviderProfile {
+    pub base_url: String,
+    pub api_key_env: Option<String>,
+    pub model_context_limits: HashMap<String, usize>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct OpenAiCompatibleAdapter {
     pub api_base_url: String,
     pub api_key: String,
-    pub model: String,
     pub client: Option<Client>,
+    pub provider_profiles: HashMap<String, ProviderProfile>,
 }
 
 impl ModelAdapter for OpenAiCompatibleAdapter {
     fn name(&self) -> &str {
         "openai-compatible"
     }
+    fn context_limits(&self) -> Option<crate::types::context::ContextLimits> {
+        Some(
+            self.provider_profiles
+                .iter()
+                .map(|(name, profile)| (name.clone(), profile.model_context_limits.clone()))
+                .collect(),
+        )
+    }
     fn stream(&self, request: &CompletionRequest) -> Result<Vec<ModelStreamChunk>, String> {
-        if self.api_base_url.trim().is_empty() {
-            return Err("OpenAI-compatible adapter requires api_base_url.".into());
+        if request.model.trim().is_empty() || request.provider.trim().is_empty() {
+            return Err("Model API request requires model and provider.".into());
+        }
+        let (base_url, api_key) = if self.provider_profiles.is_empty() {
+            if request.provider != "local" {
+                return Err("Unknown selected provider profile.".into());
+            }
+            (self.api_base_url.as_str(), self.api_key.clone())
+        } else {
+            let profile = self
+                .provider_profiles
+                .get(&request.provider)
+                .ok_or("Unknown selected provider profile.")?;
+            let key = match &profile.api_key_env {
+                Some(name) => std::env::var(name)
+                    .map_err(|_| "Selected provider profile secret is unavailable.")?,
+                None => String::new(),
+            };
+            (profile.base_url.as_str(), key)
+        };
+        if base_url.trim().is_empty() {
+            return Err("Selected provider profile has no base URL.".into());
         }
         let client = self.client.clone().unwrap_or_default();
-        let model = if request.model.is_empty() {
-            self.model.clone()
-        } else {
-            request.model.clone()
-        };
+        let model = request.model.clone();
         let payload = json!({
             "model": model,
             "messages": request.messages.iter().map(provider_message).collect::<Vec<_>>(),
             "stream": true
         });
-        let endpoint = format!(
-            "{}/chat/completions",
-            self.api_base_url.trim_end_matches('/')
-        );
+        let endpoint = format!("{}/chat/completions", base_url.trim_end_matches('/'));
         let mut call = client.post(endpoint).json(&payload);
-        if !self.api_key.is_empty() {
-            call = call.bearer_auth(&self.api_key);
+        if !api_key.is_empty() {
+            call = call.bearer_auth(&api_key);
         }
         let response = call.send().map_err(|error| error.to_string())?;
         if !response.status().is_success() {

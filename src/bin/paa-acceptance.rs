@@ -22,7 +22,6 @@ fn run() -> Result<(), String> {
         &runtime.provider_adapter,
         OpenAiCompatibleAdapter {
             api_base_url: "http://provider.local/v1".into(),
-            model: "test".into(),
             ..Default::default()
         },
     )?;
