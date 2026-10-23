@@ -61,7 +61,7 @@ The included GitHub Actions workflow checks out the exact pinned PAA source and
 runs the same source-comparison gate, so contract drift is visible in CI.
 
 The template is pinned to PAA commit
-`aa0ff01757306b2b3aa1015bb4366a5a578d5102`. `paa.lock.json` records that pin,
+`cfeb96df743feee91afc80ac81f0c4fd9a62c123`. `paa.lock.json` records that pin,
 the contract file set, and SHA-256 digests. Contracts are mirrored under
 `contracts/` for the starter's local examples and vendored under
 `vendor/paa-contracts/` for reproducible validation.
