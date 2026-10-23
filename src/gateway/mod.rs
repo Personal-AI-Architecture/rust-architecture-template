@@ -110,14 +110,24 @@ impl Gateway {
                 "Request must contain non-empty content and optional metadata.",
             );
         };
-        if content
-            .iter()
-            .any(|part| match part.get("type").and_then(Value::as_str) {
-                Some("text") => !part.get("text").is_some_and(Value::is_string),
-                Some("image" | "file") => !part.get("url").is_some_and(Value::is_string),
-                _ => true,
-            })
-        {
+        if content.iter().any(|part| {
+            let Some(fields) = part.as_object() else {
+                return true;
+            };
+            let allowed: &[&str] = match part.get("type").and_then(Value::as_str) {
+                Some("text") if part.get("text").is_some_and(Value::is_string) => {
+                    &["type", "text", "extensions"]
+                }
+                Some("image" | "file") if part.get("url").is_some_and(Value::is_string) => {
+                    &["type", "url", "name", "mime_type", "extensions"]
+                }
+                _ => return true,
+            };
+            fields.keys().any(|key| !allowed.contains(&key.as_str()))
+                || fields
+                    .get("extensions")
+                    .is_some_and(|value| !value.is_object())
+        }) {
             return error_response(400, "invalid_request", "Invalid content part.");
         }
         let actor = crate::engine::header(headers, "X-Actor-ID");

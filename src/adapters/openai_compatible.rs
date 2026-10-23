@@ -1,6 +1,6 @@
 use crate::types::{CompletionRequest, Message, ModelAdapter, ModelStreamChunk};
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, Default)]
@@ -68,7 +68,12 @@ impl ModelAdapter for OpenAiCompatibleAdapter {
         }
         let response = call.send().map_err(|error| error.to_string())?;
         if !response.status().is_success() {
-            return Err(format!("provider returned HTTP {}", response.status()));
+            let body = response.text().unwrap_or_default();
+            let payload: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            return Ok(vec![ModelStreamChunk {
+                chunk_type: "error".into(),
+                delta: normalized_provider_failure(&payload),
+            }]);
         }
         let mut chunks = Vec::new();
         for line in response.text().map_err(|error| error.to_string())?.lines() {
@@ -113,6 +118,45 @@ impl ModelAdapter for OpenAiCompatibleAdapter {
         }
         Ok(chunks)
     }
+}
+
+fn normalized_provider_failure(payload: &Value) -> Map<String, Value> {
+    let failure = payload.get("error").unwrap_or(payload);
+    let code = failure["code"]
+        .as_str()
+        .or_else(|| failure["type"].as_str());
+    let mut result = Map::new();
+    match code {
+        Some("model_not_found" | "model_unavailable") => {
+            result.insert("code".into(), Value::String("model_unavailable".into()));
+        }
+        Some("unsupported_capability" | "capability_unsupported") => {
+            let capability = failure["capability"]
+                .as_str()
+                .or_else(|| failure["param"].as_str())
+                .unwrap_or_default();
+            let valid = capability.len() <= 64
+                && capability
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+                && capability
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
+            if valid {
+                result.insert(
+                    "code".into(),
+                    Value::String("capability_unsupported".into()),
+                );
+                result.insert("capability".into(), Value::String(capability.into()));
+            }
+        }
+        _ => {}
+    }
+    if !result.contains_key("code") {
+        result.insert("code".into(), Value::String("provider_error".into()));
+    }
+    result
 }
 
 fn provider_message(message: &Message) -> Value {

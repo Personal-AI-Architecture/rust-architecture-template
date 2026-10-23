@@ -39,6 +39,80 @@ fn canonical_route_streams_and_persists() {
     assert!(detail.body["messages"][1]["content"].is_array());
 }
 
+#[derive(Clone)]
+struct FailingAdapter {
+    code: &'static str,
+    capability: Option<&'static str>,
+    calls: Arc<Mutex<Vec<(String, String)>>>,
+}
+impl ModelAdapter for FailingAdapter {
+    fn name(&self) -> &str {
+        "failing"
+    }
+    fn stream(&self, request: &CompletionRequest) -> Result<Vec<ModelStreamChunk>, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((request.model.clone(), request.provider.clone()));
+        Ok(vec![ModelStreamChunk { chunk_type: "error".into(), delta: serde_json::json!({"code":self.code,"capability":self.capability,"message":"secret=/tmp/key"}).as_object().unwrap().clone() }])
+    }
+}
+
+#[test]
+fn model_error_categories_reach_gateway_without_fallback_or_raw_text() {
+    for (code, capability) in [
+        ("model_unavailable", None),
+        ("capability_unsupported", Some("image_input")),
+    ] {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let adapter = FailingAdapter {
+            code,
+            capability,
+            calls: calls.clone(),
+        };
+        let mut gateway = Gateway::new(AgentLoop::new(Box::new(adapter), Vec::new()), None);
+        let mut headers = Map::new();
+        headers.insert("X-Actor-ID".into(), Value::String("owner".into()));
+        headers.insert(
+            "X-Actor-Permissions".into(),
+            Value::String("memory:read,memory:write".into()),
+        );
+        let response = gateway.handle(
+            "POST",
+            "/conversations/messages",
+            Some(serde_json::json!({"content":[{"type":"text","text":"hello"}]})),
+            &headers,
+        );
+        assert_eq!(response.status, 200);
+        assert_eq!(response.stream.len(), 1);
+        assert_eq!(response.stream[0].data["code"], code);
+        if let Some(expected) = capability {
+            assert_eq!(response.stream[0].data["capability"], expected);
+        }
+        assert!(!format!("{:?}", response.stream).contains("secret"));
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![("mock".into(), "local".into())]
+        );
+    }
+}
+
+#[test]
+fn extension_parts_are_accepted_and_unknown_core_fields_rejected() {
+    let adapter = load_model_adapter("mock", OpenAiCompatibleAdapter::default()).unwrap();
+    let mut gateway = Gateway::new(AgentLoop::new(adapter, Vec::new()), None);
+    let mut headers = Map::new();
+    headers.insert("X-Actor-ID".into(), Value::String("owner".into()));
+    headers.insert(
+        "X-Actor-Permissions".into(),
+        Value::String("memory:read,memory:write".into()),
+    );
+    let valid = gateway.handle("POST", "/conversations/messages", Some(serde_json::json!({"content":[{"type":"text","text":"hello","extensions":{"future":"ignored"}}]})), &headers);
+    assert_eq!(valid.status, 200);
+    let invalid = gateway.handle("POST", "/conversations/messages", Some(serde_json::json!({"content":[{"type":"text","text":"hello","future":"outside extensions"}]})), &headers);
+    assert_eq!(invalid.status, 400);
+}
+
 #[test]
 fn openai_compatible_adapter_normalizes_sse() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("provider listener");
@@ -78,6 +152,46 @@ fn openai_compatible_adapter_normalizes_sse() {
         Some("stop")
     );
     server.join().expect("provider server");
+}
+
+#[test]
+fn openai_adapter_normalizes_explicit_model_errors() {
+    for (provider_code, capability, expected) in [
+        ("model_not_found", "", "model_unavailable"),
+        (
+            "unsupported_capability",
+            "image_input",
+            "capability_unsupported",
+        ),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            let body = format!(
+                r#"{{"error":{{"code":"{provider_code}","capability":"{capability}","message":"secret=/tmp/key"}}}}"#
+            );
+            write!(stream, "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        let adapter = OpenAiCompatibleAdapter {
+            api_base_url: format!("http://{address}"),
+            ..Default::default()
+        };
+        let chunks = adapter
+            .stream(&CompletionRequest {
+                model: "m".into(),
+                provider: "local".into(),
+                stream: true,
+                ..Default::default()
+            })
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].delta["code"], expected);
+        assert!(chunks[0].delta.get("message").is_none());
+    }
 }
 
 fn provider_server(reply: &'static str) -> (String, thread::JoinHandle<()>) {
@@ -211,6 +325,27 @@ fn derived_summary_is_labelled_and_ephemeral() {
         .unwrap()
         .contains("Gateway-derived context"));
     assert_eq!(calls[0].messages[1].content[0]["text"], "current");
+}
+
+#[test]
+fn auth_context_rejects_unknown_top_level_field() {
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let loop_ = AgentLoop::new(Box::new(RecordingAdapter(recorded.clone())), Vec::new());
+    let request = EngineRequest {
+        messages: Vec::new(),
+        metadata: EngineRequestMetadata {
+            correlation_id: "corr".into(),
+            ..Default::default()
+        },
+        model: "mock".into(),
+        provider: "local".into(),
+        auth_context: serde_json::json!({"actor":{"id":"owner"},"correlation_id":"corr","unexpected":"spoof"}),
+        context_summary: None,
+    };
+    let events = loop_.run(&request, &Map::new());
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].data["code"], "auth_error");
+    assert!(recorded.lock().unwrap().is_empty());
 }
 
 fn owner_headers() -> Map<String, Value> {

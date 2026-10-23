@@ -30,7 +30,7 @@ pub struct ToolDefinition {
     #[serde(default)]
     pub parameters: Map<String, Value>,
     #[serde(default)]
-    pub source: String,
+    pub source: Value,
     #[serde(default)]
     pub category: String,
     #[serde(default)]
