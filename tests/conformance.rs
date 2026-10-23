@@ -2,6 +2,7 @@ use paa_rust_architecture_template::{
     adapters::{load_model_adapter, OpenAiCompatibleAdapter},
     engine::AgentLoop,
     gateway::Gateway,
+    types::ToolDefinition,
 };
 use serde_json::{Map, Value};
 
@@ -54,4 +55,18 @@ fn old_string_content_is_rejected() {
         &headers,
     );
     assert_eq!(response.status, 400);
+}
+
+#[test]
+fn new_tool_protocol_label_round_trips_with_source_identity() {
+    let definition: ToolDefinition = serde_json::from_value(serde_json::json!({
+        "name":"read", "description":"Read", "parameters":{},
+        "source":{"id":"service-1","kind":"future-protocol"},
+        "visibility":"always-send", "extensions":{"future":"ignored"}
+    }))
+    .unwrap();
+    assert_eq!(definition.source["id"], "service-1");
+    assert_eq!(definition.source["kind"], "future-protocol");
+    let output = serde_json::to_value(&definition).unwrap();
+    assert_eq!(output["source"]["kind"], "future-protocol");
 }
