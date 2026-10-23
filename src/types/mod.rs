@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+pub mod context;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
@@ -59,7 +61,10 @@ pub struct EngineRequest {
     pub messages: Vec<Message>,
     pub metadata: EngineRequestMetadata,
     pub model: String,
+    pub provider: String,
     pub auth_context: Value,
+    #[serde(default)]
+    pub context_summary: Option<Value>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -70,6 +75,7 @@ pub struct CompletionRequest {
     pub stream: bool,
     #[serde(default)]
     pub model: String,
+    pub provider: String,
     #[serde(default)]
     pub max_tokens: u32,
     #[serde(default)]
@@ -94,4 +100,7 @@ pub struct StreamEvent {
 pub trait ModelAdapter: Send + Sync {
     fn name(&self) -> &str;
     fn stream(&self, request: &CompletionRequest) -> Result<Vec<ModelStreamChunk>, String>;
+    fn context_limits(&self) -> Option<context::ContextLimits> {
+        None
+    }
 }

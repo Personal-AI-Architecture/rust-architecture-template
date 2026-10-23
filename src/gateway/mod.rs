@@ -12,6 +12,8 @@ pub struct StoredMessage {
     pub id: String,
     pub message: Message,
     pub created_at: String,
+    pub model: Option<String>,
+    pub provider: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub struct Conversation {
@@ -31,6 +33,7 @@ pub struct Gateway {
     pub engine: AgentLoop,
     pub memory: Store,
     pub current_model: String,
+    pub current_provider: String,
     conversations: HashMap<String, Conversation>,
 }
 
@@ -40,6 +43,7 @@ impl Gateway {
             engine,
             memory: memory.unwrap_or_else(|| Store::new(".paa-memory")),
             current_model: "mock".into(),
+            current_provider: "local".into(),
             conversations: HashMap::new(),
         }
     }
@@ -154,11 +158,31 @@ impl Gateway {
             ..Default::default()
         };
         self.append(&conversation_id, user.clone(), Some(metadata.clone()));
-        let messages = self.conversations[&conversation_id]
+        let messages: Vec<Message> = self.conversations[&conversation_id]
             .messages
             .iter()
             .map(|stored| stored.message.clone())
             .collect();
+        let Some(limit) = crate::types::context::limit_for(
+            &self.engine.context_limits,
+            &self.current_provider,
+            &self.current_model,
+        ) else {
+            return error_response(
+                503,
+                "context_limit_unknown",
+                "No safe context limit for selected provider and model.",
+            );
+        };
+        let Some((selected, omitted)) =
+            crate::types::context::select_complete_turns(&messages, &self.engine.tools, limit)
+        else {
+            return error_response(
+                422,
+                "context_overflow",
+                "Current message exceeds the selected model context window.",
+            );
+        };
         let correlation = metadata
             .get("correlation_id")
             .and_then(Value::as_str)
@@ -172,7 +196,7 @@ impl Gateway {
             Value::String(permissions.clone()),
         );
         let request = EngineRequest {
-            messages,
+            messages: selected,
             metadata: EngineRequestMetadata {
                 correlation_id: correlation.clone(),
                 conversation_id: conversation_id.clone(),
@@ -180,12 +204,21 @@ impl Gateway {
                 ..Default::default()
             },
             model: self.current_model.clone(),
+            provider: self.current_provider.clone(),
+            context_summary: None,
             auth_context: serde_json::json!({
                 "actor": {"id": actor, "type": "owner", "display_name": "Owner", "status": "active", "created": timestamp()},
                 "authentication_id": id("authn"), "authenticated_at": timestamp(), "correlation_id": correlation,
             }),
         };
         let mut stream = self.engine.run(&request, &request_headers);
+        if omitted > 0 {
+            stream.insert(0, StreamEvent { event: "context_notice".into(), data: Map::from_iter([
+                ("action".into(), Value::String("omitted".into())),
+                ("omitted_turn_count".into(), serde_json::json!(omitted)),
+                ("message".into(), Value::String("Older conversation turns were omitted from this reply's working context.".into())),
+            ]) });
+        }
         let text: String = stream
             .iter()
             .filter(|event| event.event == "text-delta")
@@ -199,7 +232,14 @@ impl Gateway {
                 .entry("finish_reason")
                 .or_insert_with(|| Value::String("stop".into()));
         }
-        if !text.is_empty() {
+        if !text.is_empty() && stream.iter().any(|event| event.event == "done") {
+            let provenance = Map::from_iter([
+                ("model".into(), Value::String(self.current_model.clone())),
+                (
+                    "provider".into(),
+                    Value::String(self.current_provider.clone()),
+                ),
+            ]);
             self.append(
                 &conversation_id,
                 Message {
@@ -207,7 +247,7 @@ impl Gateway {
                     content: vec![serde_json::json!({"type":"text","text":text})],
                     ..Default::default()
                 },
-                None,
+                Some(provenance),
             );
         }
         for event in &mut stream {
@@ -233,10 +273,36 @@ impl Gateway {
             .conversations
             .get_mut(conversation_id)
             .expect("conversation");
+        let model = if message.role == "assistant" {
+            metadata
+                .as_ref()
+                .and_then(|value| value.get("model"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        } else {
+            None
+        };
+        let provider = if message.role == "assistant" {
+            metadata
+                .as_ref()
+                .and_then(|value| value.get("provider"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        } else {
+            None
+        };
+        if message.role == "assistant" {
+            assert!(
+                model.is_some() && provider.is_some(),
+                "assistant reply requires model and provider"
+            );
+        }
         conversation.messages.push(StoredMessage {
             id: message_id.clone(),
             message: message.clone(),
             created_at: now.clone(),
+            model,
+            provider,
         });
         conversation.updated_at = now;
         self.memory.record(Entry {
@@ -259,7 +325,14 @@ impl Gateway {
         let Some(conversation) = self.conversations.get(id) else {
             return error_response(404, "conversation_not_found", "Conversation was not found.");
         };
-        let messages: Vec<_> = conversation.messages.iter().map(|stored| serde_json::json!({"id":stored.id,"role":stored.message.role,"content":stored.message.content,"created_at":stored.created_at})).collect();
+        let messages: Vec<_> = conversation.messages.iter().map(|stored| {
+            let mut item = serde_json::json!({"id":stored.id,"role":stored.message.role,"content":stored.message.content,"created_at":stored.created_at});
+            if stored.message.role == "assistant" {
+                item["model"] = serde_json::json!(stored.model);
+                item["provider"] = serde_json::json!(stored.provider);
+            }
+            item
+        }).collect();
         json_response(
             200,
             serde_json::json!({"id":conversation.id,"created_at":conversation.created_at,"updated_at":conversation.updated_at,"messages":messages}),

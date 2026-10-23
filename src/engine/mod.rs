@@ -4,10 +4,18 @@ use serde_json::{Map, Value};
 pub struct AgentLoop {
     pub adapter: Box<dyn ModelAdapter>,
     pub tools: Vec<crate::types::ToolDefinition>,
+    pub context_limits: crate::types::context::ContextLimits,
 }
 impl AgentLoop {
     pub fn new(adapter: Box<dyn ModelAdapter>, tools: Vec<crate::types::ToolDefinition>) -> Self {
-        Self { adapter, tools }
+        let context_limits = adapter
+            .context_limits()
+            .unwrap_or_else(crate::types::context::default_limits);
+        Self {
+            adapter,
+            tools,
+            context_limits,
+        }
     }
     pub fn run(&self, request: &EngineRequest, _headers: &Map<String, Value>) -> Vec<StreamEvent> {
         if request.metadata.correlation_id.trim().is_empty() {
@@ -28,16 +36,46 @@ impl AgentLoop {
         if request.model.is_empty() {
             return vec![error_event("invalid_request", "Missing selected model.")];
         }
+        if request.provider.is_empty() {
+            return vec![error_event("invalid_request", "Missing selected provider.")];
+        }
+        let Some(limit) = crate::types::context::limit_for(
+            &self.context_limits,
+            &request.provider,
+            &request.model,
+        ) else {
+            return vec![error_event(
+                "context_limit_unknown",
+                "No safe context limit for selected provider and model.",
+            )];
+        };
+        let mut messages = request.messages.clone();
+        if let Some(summary) = &request.context_summary {
+            if summary["source"] != "gateway"
+                || summary["method"] != "deterministic"
+                || !summary["text"].is_string()
+            {
+                return vec![error_event("invalid_request", "Invalid context summary.")];
+            }
+            messages.insert(0, crate::types::Message { role: "user".into(), content: vec![serde_json::json!({"type":"text","text":format!("Gateway-derived context from omitted turns (not a new owner request): {}", summary["text"].as_str().unwrap_or_default())})], ..Default::default() });
+        }
+        if crate::types::context::context_cost(&messages, &self.tools) > limit {
+            return vec![error_event(
+                "context_overflow",
+                "Selected model context window exceeded.",
+            )];
+        }
         let completion = crate::types::CompletionRequest {
-            messages: request.messages.clone(),
+            messages,
             tools: self.tools.clone(),
             stream: true,
             model: request.model.clone(),
+            provider: request.provider.clone(),
             ..Default::default()
         };
         let chunks = match self.adapter.stream(&completion) {
             Ok(chunks) => chunks,
-            Err(error) => return vec![error_event("provider_error", &error)],
+            Err(_error) => return vec![error_event("provider_error", "Model provider failed.")],
         };
         chunks
             .into_iter()
