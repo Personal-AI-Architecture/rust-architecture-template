@@ -2,6 +2,7 @@
   "name": "rust-architecture-template",
   "language": "rust",
   "root": ".",
+  "live": { "start": "cargo run --quiet --bin paa-server -- $PAA_HOST $PAA_PORT" },
   "contracts": { "lock_file": "paa.lock.json" },
   "commands": [
     { "name": "typecheck", "command": "cargo clippy --all-targets --all-features -- -D warnings" },

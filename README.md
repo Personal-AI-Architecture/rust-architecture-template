@@ -24,6 +24,7 @@ shared language-neutral validator.
 ```bash
 cargo run --bin paa-demo
 cargo test
+export PAA_DEMO_API_KEY='replace-with-a-local-test-token'
 cargo run --bin paa-server
 ```
 
@@ -33,16 +34,29 @@ In another terminal:
 curl http://127.0.0.1:8000/health
 curl -N -X POST http://127.0.0.1:8000/conversations/messages \
   -H 'Content-Type: application/json' \
-  -H 'X-Actor-ID: demo-user' \
-  -H 'X-Actor-Permissions: memory:read,memory:write' \
+  -H "X-API-Key: $PAA_DEMO_API_KEY" \
   -d '{"content":[{"type":"text","text":"Explain what PAA is."}]}'
 ```
 
-The demo server intentionally uses the Rust standard library for local HTTP
-hosting. Replace it with your chosen production HTTP stack when you need TLS,
-graceful shutdown, limits, middleware, and a mature request parser.
+The demo server uses the Rust standard library for local HTTP hosting. It
+accepts the configured owner token as `X-API-Key` or Bearer auth, rejects
+requests over 1 MiB, and saves conversations as plain JSON under
+`RUNTIME_MEMORY_ROOT` (default `.paa-memory`). The token is for local testing;
+use a mature HTTP stack and Auth implementation for a product deployment.
+To select the included OpenAI-compatible adapter at startup, set
+`RUNTIME_PROVIDER_ADAPTER=openai-compatible`, `PAA_MODEL_API_BASE_URL`,
+`PAA_MODEL_ID`, `PAA_MODEL_CONTEXT_LIMIT`, and `PAA_MODEL_API_KEY` in the local
+environment. The model context limit must be a verified value for that model.
 
 ## Validate the template
+
+Run the live Gateway check from this workspace (it starts the server with a
+temporary token and memory root, then verifies auth, SSE, filters, size limits,
+and restart persistence):
+
+```bash
+node ../paa-conformance-validator/bin/paa-live-target.js --target paa.target.json
+```
 
 Run the complete native suite from this directory:
 
