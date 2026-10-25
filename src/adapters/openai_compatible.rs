@@ -1,9 +1,10 @@
 use crate::types::{CompletionRequest, Message, ModelAdapter, ModelStreamChunk};
 use reqwest::blocking::Client;
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ProviderProfile {
     pub base_url: String,
     pub api_key_env: Option<String>,
