@@ -3,11 +3,14 @@ use crate::{
     memory::{Entry, Store},
     types::{EngineRequest, EngineRequestMetadata, Message, StreamEvent},
 };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredMessage {
     pub id: String,
     pub message: Message,
@@ -15,7 +18,7 @@ pub struct StoredMessage {
     pub model: Option<String>,
     pub provider: Option<String>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Conversation {
     pub id: String,
     pub created_at: String,
@@ -35,6 +38,7 @@ pub struct Gateway {
     pub current_model: String,
     pub current_provider: String,
     conversations: HashMap<String, Conversation>,
+    persistence_path: Option<PathBuf>,
 }
 
 impl Gateway {
@@ -45,7 +49,28 @@ impl Gateway {
             current_model: "mock".into(),
             current_provider: "local".into(),
             conversations: HashMap::new(),
+            persistence_path: None,
         }
+    }
+    pub fn enable_persistence(&mut self, root: &str) -> std::io::Result<()> {
+        std::fs::create_dir_all(root)?;
+        let path = PathBuf::from(root).join("conversations.json");
+        if path.exists() {
+            let bytes = std::fs::read(&path)?;
+            self.conversations = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+        }
+        self.persistence_path = Some(path);
+        Ok(())
+    }
+    fn save(&self) -> std::io::Result<()> {
+        let Some(path) = &self.persistence_path else {
+            return Ok(());
+        };
+        let bytes =
+            serde_json::to_vec_pretty(&self.conversations).map_err(std::io::Error::other)?;
+        let temporary = path.with_extension("tmp");
+        std::fs::write(&temporary, bytes)?;
+        std::fs::rename(temporary, path)
     }
     pub fn handle(
         &mut self,
@@ -60,7 +85,8 @@ impl Gateway {
             return json_response(200, serde_json::json!({"status":"ok","architecture":"PAA"}));
         }
         if method == "GET" && route == "/conversations" {
-            return self.list_conversations();
+            return self
+                .list_conversations(path.split_once('?').map(|(_, query)| query).unwrap_or(""));
         }
         if method == "GET" && route.starts_with("/conversations/") {
             return self
@@ -168,6 +194,9 @@ impl Gateway {
             ..Default::default()
         };
         self.append(&conversation_id, user.clone(), Some(metadata.clone()));
+        if self.save().is_err() {
+            return error_response(500, "storage_error", "Conversation could not be saved.");
+        }
         let messages: Vec<Message> = self.conversations[&conversation_id]
             .messages
             .iter()
@@ -236,13 +265,10 @@ impl Gateway {
             .collect();
         if let Some(done) = stream.iter_mut().find(|event| event.event == "done") {
             done.data
-                .entry("message_id")
-                .or_insert_with(|| Value::String(id("msg")));
-            done.data
                 .entry("finish_reason")
                 .or_insert_with(|| Value::String("stop".into()));
         }
-        if !text.is_empty() && stream.iter().any(|event| event.event == "done") {
+        if stream.iter().any(|event| event.event == "done") {
             let provenance = Map::from_iter([
                 ("model".into(), Value::String(self.current_model.clone())),
                 (
@@ -250,7 +276,7 @@ impl Gateway {
                     Value::String(self.current_provider.clone()),
                 ),
             ]);
-            self.append(
+            let message_id = self.append(
                 &conversation_id,
                 Message {
                     role: "assistant".into(),
@@ -259,6 +285,13 @@ impl Gateway {
                 },
                 Some(provenance),
             );
+            if let Some(done) = stream.iter_mut().find(|event| event.event == "done") {
+                done.data
+                    .insert("message_id".into(), Value::String(message_id));
+            }
+        }
+        if self.save().is_err() {
+            return error_response(500, "storage_error", "Conversation could not be saved.");
         }
         for event in &mut stream {
             event
@@ -276,7 +309,7 @@ impl Gateway {
         conversation_id: &str,
         message: Message,
         metadata: Option<Map<String, Value>>,
-    ) {
+    ) -> String {
         let now = timestamp();
         let message_id = id("msg");
         let conversation = self
@@ -317,18 +350,76 @@ impl Gateway {
         conversation.updated_at = now;
         self.memory.record(Entry {
             kind: "message".into(),
-            id: message_id,
+            id: message_id.clone(),
             conversation_id: conversation_id.into(),
             role: message.role,
             content: message.content,
             metadata,
         });
+        message_id
     }
-    fn list_conversations(&self) -> Response {
-        let items: Vec<_> = self.conversations.values().map(|conversation| serde_json::json!({"id":conversation.id,"created_at":conversation.created_at,"updated_at":conversation.updated_at,"message_count":conversation.messages.len()})).collect();
+    fn list_conversations(&self, query: &str) -> Response {
+        let params = parse_query(query);
+        let limit = match params.get("limit") {
+            Some(value) => value
+                .parse::<usize>()
+                .ok()
+                .filter(|value| (1..=100).contains(value)),
+            None => Some(20),
+        };
+        let offset = match params.get("offset") {
+            Some(value) => value.parse::<usize>().ok(),
+            None => Some(0),
+        };
+        let (Some(limit), Some(offset)) = (limit, offset) else {
+            return error_response(400, "invalid_request", "Invalid pagination.");
+        };
+        let after = match params.get("from") {
+            Some(value) => match DateTime::parse_from_rfc3339(value) {
+                Ok(value) => Some(value.with_timezone(&Utc)),
+                Err(_) => return error_response(400, "invalid_request", "Invalid from timestamp."),
+            },
+            None => None,
+        };
+        let before = match params.get("to") {
+            Some(value) => match DateTime::parse_from_rfc3339(value) {
+                Ok(value) => Some(value.with_timezone(&Utc)),
+                Err(_) => return error_response(400, "invalid_request", "Invalid to timestamp."),
+            },
+            None => None,
+        };
+        let search = params
+            .get("search")
+            .map(|value| value.to_lowercase())
+            .unwrap_or_default();
+        let mut matches: Vec<_> = self
+            .conversations
+            .values()
+            .filter(|conversation| {
+                let created = DateTime::parse_from_rfc3339(&conversation.created_at)
+                    .ok()
+                    .map(|value| value.with_timezone(&Utc));
+                if after.is_some_and(|bound| created.map_or(true, |date| date < bound)) {
+                    return false;
+                }
+                if before.is_some_and(|bound| created.map_or(true, |date| date > bound)) {
+                    return false;
+                }
+                search.is_empty()
+                    || conversation.messages.iter().any(|message| {
+                        serde_json::to_string(&message.message.content)
+                            .unwrap_or_default()
+                            .to_lowercase()
+                            .contains(&search)
+                    })
+            })
+            .collect();
+        matches.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        let total = matches.len();
+        let items: Vec<_> = matches.into_iter().skip(offset).take(limit).map(|conversation| serde_json::json!({"id":conversation.id,"created_at":conversation.created_at,"updated_at":conversation.updated_at,"message_count":conversation.messages.len()})).collect();
         json_response(
             200,
-            serde_json::json!({"conversations":items,"total":items.len()}),
+            serde_json::json!({"conversations":items,"total":total,"limit":limit,"offset":offset}),
         )
     }
     fn get_conversation(&self, id: &str) -> Response {
@@ -348,6 +439,31 @@ impl Gateway {
             serde_json::json!({"id":conversation.id,"created_at":conversation.created_at,"updated_at":conversation.updated_at,"messages":messages}),
         )
     }
+}
+
+fn parse_query(query: &str) -> HashMap<String, String> {
+    fn decode(value: &str) -> String {
+        let mut bytes = Vec::new();
+        let raw = value.as_bytes();
+        let mut index = 0;
+        while index < raw.len() {
+            if raw[index] == b'%' && index + 2 < raw.len() {
+                if let Ok(decoded) = u8::from_str_radix(&value[index + 1..index + 3], 16) {
+                    bytes.push(decoded);
+                    index += 3;
+                    continue;
+                }
+            }
+            bytes.push(if raw[index] == b'+' { b' ' } else { raw[index] });
+            index += 1;
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+    query
+        .split('&')
+        .filter_map(|part| part.split_once('='))
+        .map(|(key, value)| (decode(key), decode(value)))
+        .collect()
 }
 fn timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
