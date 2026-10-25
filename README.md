@@ -48,6 +48,32 @@ To select the included OpenAI-compatible adapter at startup, set
 `PAA_MODEL_ID`, `PAA_MODEL_CONTEXT_LIMIT`, and `PAA_MODEL_API_KEY` in the local
 environment. The model context limit must be a verified value for that model.
 
+Generate the first local owner token with `openssl rand -hex 24` and keep its
+value outside Memory; set `PAA_DEMO_API_KEY` to that value. The server seeds
+owner preferences in Memory on first start. To configure multiple
+OpenAI-compatible profiles, put this JSON in an untracked file and set
+`PAA_ADAPTER_CONFIG_FILE` to its path (replace the model ID and limit with a
+verified value):
+
+```json
+{"provider_profiles":{"openrouter":{"base_url":"https://openrouter.ai/api/v1","api_key_env":"OPENROUTER_API_KEY","model_context_limits":{"your-model-id":8192}}}}
+```
+
+Set `OPENROUTER_API_KEY` in the environment, never in that file or Memory.
+The endpoint shown is [OpenRouter's documented API base](https://openrouter.ai/developers).
+`PAA_DEFAULT_PROVIDER` and `PAA_MODEL_ID` seed preferences only when no
+owner selection exists. To change the selection while the server runs, call
+the authenticated Memory preference route:
+
+```bash
+curl -X PUT http://127.0.0.1:8000/owner/preferences \
+  -H 'Content-Type: application/json' -H "X-API-Key: $PAA_DEMO_API_KEY" \
+  -d '{"model":"your-model-id","active_provider_profile":"openrouter"}'
+```
+
+The next message uses the selected model and profile without a restart. An
+unknown choice produces an error instead of silently selecting a default.
+
 ## Validate the template
 
 Run the live Gateway check from this workspace (it starts the server with a

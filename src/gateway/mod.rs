@@ -37,6 +37,7 @@ pub struct Gateway {
     pub memory: Store,
     pub current_model: String,
     pub current_provider: String,
+    pub preferences_from_memory: bool,
     conversations: HashMap<String, Conversation>,
     persistence_path: Option<PathBuf>,
 }
@@ -48,6 +49,7 @@ impl Gateway {
             memory: memory.unwrap_or_else(|| Store::new(".paa-memory")),
             current_model: "mock".into(),
             current_provider: "local".into(),
+            preferences_from_memory: false,
             conversations: HashMap::new(),
             persistence_path: None,
         }
@@ -165,6 +167,32 @@ impl Gateway {
                 "Missing required actor headers.",
             );
         }
+        if self.preferences_from_memory {
+            match self.memory.read_preferences() {
+                Ok(Some(preference)) => {
+                    self.current_model = preference.model;
+                    self.current_provider = preference.active_provider_profile;
+                }
+                _ => {
+                    return error_response(
+                        503,
+                        "selection_unavailable",
+                        "Current model and provider preferences are unavailable.",
+                    )
+                }
+            }
+        }
+        let Some(limit) = crate::types::context::limit_for(
+            &self.engine.context_limits,
+            &self.current_provider,
+            &self.current_model,
+        ) else {
+            return error_response(
+                503,
+                "context_limit_unknown",
+                "No safe context limit for selected provider and model.",
+            );
+        };
         let metadata = body
             .get("metadata")
             .and_then(Value::as_object)
@@ -202,17 +230,6 @@ impl Gateway {
             .iter()
             .map(|stored| stored.message.clone())
             .collect();
-        let Some(limit) = crate::types::context::limit_for(
-            &self.engine.context_limits,
-            &self.current_provider,
-            &self.current_model,
-        ) else {
-            return error_response(
-                503,
-                "context_limit_unknown",
-                "No safe context limit for selected provider and model.",
-            );
-        };
         let Some((selected, omitted)) =
             crate::types::context::select_complete_turns(&messages, &self.engine.tools, limit)
         else {

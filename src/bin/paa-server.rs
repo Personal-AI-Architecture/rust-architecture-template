@@ -28,25 +28,58 @@ fn main() {
         std::env::var("RUNTIME_PROVIDER_ADAPTER").unwrap_or_else(|_| "mock".into());
     let mut openai = OpenAiCompatibleAdapter::default();
     let mut model = "mock".to_string();
+    let mut provider = "local".to_string();
     if provider_adapter == "openai-compatible" {
-        model = std::env::var("PAA_MODEL_ID").expect("set PAA_MODEL_ID");
-        let base_url = std::env::var("PAA_MODEL_API_BASE_URL").expect("set PAA_MODEL_API_BASE_URL");
-        let limit: usize = std::env::var("PAA_MODEL_CONTEXT_LIMIT")
-            .expect("set PAA_MODEL_CONTEXT_LIMIT")
-            .parse()
-            .expect("valid PAA_MODEL_CONTEXT_LIMIT");
+        if let Ok(path) = std::env::var("PAA_ADAPTER_CONFIG_FILE") {
+            let document: Value =
+                serde_json::from_slice(&std::fs::read(path).expect("adapter config file"))
+                    .expect("valid adapter config");
+            openai.provider_profiles =
+                serde_json::from_value(document["provider_profiles"].clone())
+                    .expect("provider profiles");
+        } else if let Ok(raw) = std::env::var("PAA_MODEL_PROFILES_JSON") {
+            openai.provider_profiles = serde_json::from_str(&raw).expect("provider profiles JSON");
+        } else {
+            model = std::env::var("PAA_MODEL_ID").expect("set PAA_MODEL_ID");
+            let base_url =
+                std::env::var("PAA_MODEL_API_BASE_URL").expect("set PAA_MODEL_API_BASE_URL");
+            let limit: usize = std::env::var("PAA_MODEL_CONTEXT_LIMIT")
+                .expect("set PAA_MODEL_CONTEXT_LIMIT")
+                .parse()
+                .expect("valid PAA_MODEL_CONTEXT_LIMIT");
+            assert!(
+                !model.is_empty() && !base_url.is_empty() && limit > 0,
+                "model profile must be complete"
+            );
+            openai.provider_profiles.insert(
+                "local".into(),
+                ProviderProfile {
+                    base_url,
+                    api_key_env: Some("PAA_MODEL_API_KEY".into()),
+                    model_context_limits: HashMap::from([(model.clone(), limit)]),
+                },
+            );
+        }
         assert!(
-            !model.is_empty() && !base_url.is_empty() && limit > 0,
-            "model profile must be complete"
+            !openai.provider_profiles.is_empty(),
+            "provider profiles required"
         );
-        openai.provider_profiles.insert(
-            "local".into(),
-            ProviderProfile {
-                base_url,
-                api_key_env: Some("PAA_MODEL_API_KEY".into()),
-                model_context_limits: HashMap::from([(model.clone(), limit)]),
-            },
-        );
+        let mut provider_names: Vec<_> = openai.provider_profiles.keys().cloned().collect();
+        provider_names.sort();
+        provider =
+            std::env::var("PAA_DEFAULT_PROVIDER").unwrap_or_else(|_| provider_names[0].clone());
+        let profile = openai
+            .provider_profiles
+            .get(&provider)
+            .expect("default provider profile");
+        if let Ok(selected) = std::env::var("PAA_MODEL_ID") {
+            model = selected;
+        }
+        if model == "mock" {
+            let mut model_names: Vec<_> = profile.model_context_limits.keys().cloned().collect();
+            model_names.sort();
+            model = model_names.first().expect("default model limit").clone();
+        }
     }
     let adapter = load_model_adapter(&provider_adapter, openai).expect("configured adapter");
     let memory_root = std::env::var("RUNTIME_MEMORY_ROOT").unwrap_or_else(|_| ".paa-memory".into());
@@ -56,8 +89,20 @@ fn main() {
             &memory_root,
         )),
     );
-    app.current_model = model;
-    app.current_provider = "local".into();
+    if app
+        .memory
+        .read_preferences()
+        .expect("read owner preferences")
+        .is_none()
+    {
+        app.memory
+            .write_preferences(&paa_rust_architecture_template::memory::Preferences {
+                model,
+                active_provider_profile: provider,
+            })
+            .expect("seed owner preferences");
+    }
+    app.preferences_from_memory = true;
     app.enable_persistence(&memory_root)
         .expect("load conversation memory");
     let gateway = Arc::new(Mutex::new(app));
@@ -154,7 +199,7 @@ fn handle_connection(mut stream: TcpStream, gateway: Arc<Mutex<Gateway>>, api_ke
         );
         return;
     }
-    if method == "POST" && content_length == 0 {
+    if (method == "POST" || method == "PUT") && content_length == 0 {
         write_response(
             &mut stream,
             error_response(411, "length_required", "Content-Length required."),
@@ -186,6 +231,58 @@ fn handle_connection(mut stream: TcpStream, gateway: Arc<Mutex<Gateway>>, api_ke
     } else {
         serde_json::from_str(body_text).ok()
     };
+    if path == "/owner/preferences" {
+        let app = gateway.lock().expect("gateway lock");
+        let response = if method == "GET" {
+            match app.memory.read_preferences() {
+                Ok(Some(preference)) => Response {
+                    status: 200,
+                    headers: Map::new(),
+                    body: serde_json::to_value(preference).unwrap_or(Value::Null),
+                    stream: Vec::new(),
+                },
+                _ => error_response(503, "selection_unavailable", "Preferences unavailable."),
+            }
+        } else if method == "PUT" {
+            let model = body
+                .as_ref()
+                .and_then(|value: &Value| value.get("model"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let provider = body
+                .as_ref()
+                .and_then(|value: &Value| value.get("active_provider_profile"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if model.is_empty() || provider.is_empty() {
+                error_response(
+                    400,
+                    "invalid_request",
+                    "Model and active_provider_profile are required.",
+                )
+            } else {
+                let preference = paa_rust_architecture_template::memory::Preferences {
+                    model: model.into(),
+                    active_provider_profile: provider.into(),
+                };
+                match app.memory.write_preferences(&preference) {
+                    Ok(()) => Response {
+                        status: 200,
+                        headers: Map::new(),
+                        body: serde_json::to_value(preference).unwrap_or(Value::Null),
+                        stream: Vec::new(),
+                    },
+                    Err(_) => {
+                        error_response(500, "storage_error", "Preferences could not be saved.")
+                    }
+                }
+            }
+        } else {
+            error_response(404, "not_found", "Route not found.")
+        };
+        write_response(&mut stream, response);
+        return;
+    }
     let response = gateway
         .lock()
         .expect("gateway lock")
@@ -204,6 +301,9 @@ fn write_response(stream: &mut TcpStream, response: Response) {
         if let Some(value) = value.as_str() {
             output.push_str(&format!("{key}: {value}\r\n"));
         }
+    }
+    if !is_stream && !output.to_ascii_lowercase().contains("content-type:") {
+        output.push_str("Content-Type: application/json\r\n");
     }
     let body = if is_stream {
         response
