@@ -1,7 +1,7 @@
 use crate::{
-    engine::AgentLoop,
+    agent_loop::AgentLoop,
     memory::{Entry, Store},
-    types::{EngineRequest, EngineRequestMetadata, Message, StreamEvent},
+    types::{AgentLoopRequest, AgentLoopRequestMetadata, Message, StreamEvent},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub struct Response {
     pub stream: Vec<StreamEvent>,
 }
 pub struct Gateway {
-    pub engine: AgentLoop,
+    pub agent_loop: AgentLoop,
     pub memory: Store,
     pub current_model: String,
     pub current_provider: String,
@@ -43,9 +43,9 @@ pub struct Gateway {
 }
 
 impl Gateway {
-    pub fn new(engine: AgentLoop, memory: Option<Store>) -> Self {
+    pub fn new(agent_loop: AgentLoop, memory: Option<Store>) -> Self {
         Self {
-            engine,
+            agent_loop,
             memory: memory.unwrap_or_else(|| Store::new(".paa-memory")),
             current_model: "mock".into(),
             current_provider: "local".into(),
@@ -158,8 +158,8 @@ impl Gateway {
         }) {
             return error_response(400, "invalid_request", "Invalid content part.");
         }
-        let actor = crate::engine::header(headers, "X-Actor-ID");
-        let permissions = crate::engine::header(headers, "X-Actor-Permissions");
+        let actor = crate::agent_loop::header(headers, "X-Actor-ID");
+        let permissions = crate::agent_loop::header(headers, "X-Actor-Permissions");
         if actor.is_empty() || permissions.is_empty() {
             return error_response(
                 401,
@@ -183,7 +183,7 @@ impl Gateway {
             }
         }
         let Some(limit) = crate::types::context::limit_for(
-            &self.engine.context_limits,
+            &self.agent_loop.context_limits,
             &self.current_provider,
             &self.current_model,
         ) else {
@@ -231,7 +231,7 @@ impl Gateway {
             .map(|stored| stored.message.clone())
             .collect();
         let Some((selected, omitted)) =
-            crate::types::context::select_complete_turns(&messages, &self.engine.tools, limit)
+            crate::types::context::select_complete_turns(&messages, &self.agent_loop.tools, limit)
         else {
             return error_response(
                 422,
@@ -251,9 +251,9 @@ impl Gateway {
             "X-Actor-Permissions".into(),
             Value::String(permissions.clone()),
         );
-        let request = EngineRequest {
+        let request = AgentLoopRequest {
             messages: selected,
-            metadata: EngineRequestMetadata {
+            metadata: AgentLoopRequestMetadata {
                 correlation_id: correlation.clone(),
                 conversation_id: conversation_id.clone(),
                 client_context: metadata.clone(),
@@ -267,7 +267,7 @@ impl Gateway {
                 "authentication_id": id("authn"), "authenticated_at": timestamp(), "correlation_id": correlation,
             }),
         };
-        let mut stream = self.engine.run(&request, &request_headers);
+        let mut stream = self.agent_loop.run(&request, &request_headers);
         if omitted > 0 {
             stream.insert(0, StreamEvent { event: "context_notice".into(), data: Map::from_iter([
                 ("action".into(), Value::String("omitted".into())),

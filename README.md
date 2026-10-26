@@ -10,9 +10,14 @@ provider-profile routing, saved reply provenance, context limits, and notices
 for omitted complete turns. This starter's small text journey is not a full
 implementation of every PAA tool and product conformance case.
 
-The live HTTP starter currently starts the Agent Loop with an empty tool list;
-it does not load configured `tool_sources`. Tool execution and source-driven
-discovery still need implementation in a product built from this starter.
+The template includes a pass-through Streamable HTTP MCP tool-source adapter. Use
+`McpToolSource::new(id, url)`, then `discover()` and `call(name, arguments)` to discover an external service and call its tools. The adapter binds
+canonical source identity to the configured source ID; the service cannot
+choose that identity. The live HTTP starter still starts the Agent Loop with
+an empty tool list. Wiring source discovery and tool execution into that host
+remains product integration work. These adapters target the MCP
+`2025-03-26` Streamable HTTP lifecycle; other MCP transports and the newer
+sessionless lifecycle require a separate adapter.
 
 This is an educational and development template. It uses a deterministic mock
 adapter by default, so the demo and tests run offline. The included
@@ -118,7 +123,7 @@ The included GitHub Actions workflow checks out the exact pinned PAA source and
 runs the same source-comparison gate, so contract drift is visible in CI.
 
 The template is pinned to PAA commit
-`cfeb96df743feee91afc80ac81f0c4fd9a62c123`. `paa.lock.json` records that pin,
+`47d6471a8307fa59a83c58dd635820b0cb0965b6`. `paa.lock.json` records that pin,
 the contract file set, and SHA-256 digests. Contracts are mirrored under
 `contracts/` for the starter's local examples and vendored under
 `vendor/paa-contracts/` for reproducible validation.
@@ -153,14 +158,14 @@ Canonical routes demonstrated by the starter:
 The public message shape uses content parts: `{ "content": [{"type": "text", "text": "..."}], "metadata": {} }`.
 Actor identity and permissions arrive through `X-Actor-ID` and
 `X-Actor-Permissions`; provider selection is runtime configuration, not a public
-engine request field.
+Agent Loop request field.
 
 ## Project layout
 
 ```text
 src/types/       PAA-facing request, message, tool, and stream contracts
 src/gateway/     route handling, public validation, streaming, persistence hook
-src/engine/      provider-neutral Agent Loop
+src/agent_loop/      provider-neutral Agent Loop
 src/adapters/    mock and OpenAI-compatible adapter boundaries
 src/memory/      replaceable memory persistence boundary
 src/config/      runtime configuration loading

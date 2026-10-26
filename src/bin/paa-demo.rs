@@ -1,6 +1,6 @@
 use paa_rust_architecture_template::{
     adapters::{load_model_adapter, OpenAiCompatibleAdapter},
-    engine::AgentLoop,
+    agent_loop::AgentLoop,
     gateway::Gateway,
 };
 use serde_json::{Map, Value};
