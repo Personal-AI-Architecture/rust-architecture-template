@@ -40,7 +40,7 @@ pub struct ToolDefinition {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct EngineRequestMetadata {
+pub struct AgentLoopRequestMetadata {
     pub correlation_id: String,
     #[serde(default)]
     pub conversation_id: String,
@@ -57,9 +57,9 @@ pub struct EngineRequestMetadata {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct EngineRequest {
+pub struct AgentLoopRequest {
     pub messages: Vec<Message>,
-    pub metadata: EngineRequestMetadata,
+    pub metadata: AgentLoopRequestMetadata,
     pub model: String,
     pub provider: String,
     pub auth_context: Value,

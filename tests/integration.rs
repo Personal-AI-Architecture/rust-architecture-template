@@ -1,10 +1,10 @@
 use paa_rust_architecture_template::{
     adapters::{load_model_adapter, OpenAiCompatibleAdapter, ProviderProfile},
-    engine::AgentLoop,
+    agent_loop::AgentLoop,
     gateway::Gateway,
     types::{
-        context, CompletionRequest, EngineRequest, EngineRequestMetadata, Message, ModelAdapter,
-        ModelStreamChunk,
+        context, AgentLoopRequest, AgentLoopRequestMetadata, CompletionRequest, Message,
+        ModelAdapter, ModelStreamChunk,
     },
 };
 use serde_json::{Map, Value};
@@ -303,9 +303,9 @@ fn derived_summary_is_labelled_and_ephemeral() {
         content: vec![serde_json::json!({"type":"text","text":"current"})],
         ..Default::default()
     }];
-    let request = EngineRequest {
+    let request = AgentLoopRequest {
         messages: original.clone(),
-        metadata: EngineRequestMetadata {
+        metadata: AgentLoopRequestMetadata {
             correlation_id: "corr".into(),
             ..Default::default()
         },
@@ -331,9 +331,9 @@ fn derived_summary_is_labelled_and_ephemeral() {
 fn auth_context_rejects_unknown_top_level_field() {
     let recorded = Arc::new(Mutex::new(Vec::new()));
     let loop_ = AgentLoop::new(Box::new(RecordingAdapter(recorded.clone())), Vec::new());
-    let request = EngineRequest {
+    let request = AgentLoopRequest {
         messages: Vec::new(),
-        metadata: EngineRequestMetadata {
+        metadata: AgentLoopRequestMetadata {
             correlation_id: "corr".into(),
             ..Default::default()
         },
@@ -411,9 +411,9 @@ fn context_limits_block_unknown_and_oversized_and_notice_omission() {
         (unknown.status, unknown.body["code"].as_str()),
         (503, Some("context_limit_unknown"))
     );
-    gateway.engine.context_limits = context::default_limits();
+    gateway.agent_loop.context_limits = context::default_limits();
     gateway
-        .engine
+        .agent_loop
         .context_limits
         .get_mut("local")
         .unwrap()
@@ -436,7 +436,7 @@ fn context_limits_block_unknown_and_oversized_and_notice_omission() {
     };
     let one_cost = context::context_cost(&[one], &[]);
     gateway
-        .engine
+        .agent_loop
         .context_limits
         .get_mut("local")
         .unwrap()

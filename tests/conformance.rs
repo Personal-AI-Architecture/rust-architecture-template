@@ -1,13 +1,13 @@
 use paa_rust_architecture_template::{
     adapters::{load_model_adapter, OpenAiCompatibleAdapter},
-    engine::AgentLoop,
+    agent_loop::AgentLoop,
     gateway::Gateway,
     types::ToolDefinition,
 };
 use serde_json::{Map, Value};
 
 #[test]
-fn public_request_rejects_internal_engine_shape() {
+fn public_request_rejects_internal_agent_loop_shape() {
     let adapter = load_model_adapter("mock", OpenAiCompatibleAdapter::default()).unwrap();
     let mut gateway = Gateway::new(AgentLoop::new(adapter, Vec::new()), None);
     let mut headers = Map::new();

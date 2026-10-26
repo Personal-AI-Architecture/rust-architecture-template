@@ -1,7 +1,7 @@
 use paa_rust_architecture_template::{
     adapters::{load_model_adapter, MockAdapter, OpenAiCompatibleAdapter},
+    agent_loop::AgentLoop,
     checks, config,
-    engine::AgentLoop,
     gateway::Gateway,
     memory::Store,
 };

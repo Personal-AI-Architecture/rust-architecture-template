@@ -114,7 +114,7 @@ pub fn check_contracts(root: &Path, source_checkout: Option<&Path>) -> Vec<Strin
         }
     }
     let gateway = read(root, "contracts/openapi/gateway-api.yaml");
-    let engine = read(root, "contracts/openapi/gateway-engine.yaml");
+    let agent_loop = read(root, "contracts/openapi/gateway-agent-loop.yaml");
     let model = read(root, "contracts/openapi/model-api.yaml");
     for route in [
         "  /conversations/messages:",
@@ -146,7 +146,7 @@ pub fn check_contracts(root: &Path, source_checkout: Option<&Path>) -> Vec<Strin
         "SSEStream:",
         "auth_context:",
     ] {
-        if !engine.contains(marker) {
+        if !agent_loop.contains(marker) {
             errors.push(format!("Gateway-Agent Loop contract is missing: {marker}."));
         }
     }
@@ -265,7 +265,7 @@ pub fn check_boundaries(root: &Path) -> Vec<String> {
         let source = fs::read_to_string(&path).unwrap_or_default();
         let core_component = [
             "src/config/",
-            "src/engine/",
+            "src/agent_loop/",
             "src/gateway/",
             "src/memory/",
             "src/types/",
@@ -286,7 +286,7 @@ pub fn check_boundaries(root: &Path) -> Vec<String> {
         }
     }
     let metadata = read(root, "src/types/mod.rs");
-    if let Some(start) = metadata.find("pub struct EngineRequestMetadata") {
+    if let Some(start) = metadata.find("pub struct AgentLoopRequestMetadata") {
         let section = &metadata[start
             ..metadata[start..]
                 .find('}')
@@ -294,11 +294,11 @@ pub fn check_boundaries(root: &Path) -> Vec<String> {
                 .unwrap_or(metadata.len())];
         for forbidden in ["provider_adapter", "model", "tools"] {
             if section.contains(forbidden) {
-                errors.push(format!("EngineRequestMetadata must not include runtime reconfiguration key: {forbidden}"));
+                errors.push(format!("AgentLoopRequestMetadata must not include runtime reconfiguration key: {forbidden}"));
             }
         }
     } else {
-        errors.push("EngineRequestMetadata contract is missing.".into());
+        errors.push("AgentLoopRequestMetadata contract is missing.".into());
     }
     let gateway = read(root, "src/gateway/mod.rs");
     for marker in ["/conversations/messages", "/conversations", "/messages"] {
@@ -314,7 +314,7 @@ pub fn check_lock_in(root: &Path) -> Vec<String> {
         "src/adapters/mod.rs",
         "src/adapters/mock.rs",
         "src/adapters/openai_compatible.rs",
-        "src/engine/mod.rs",
+        "src/agent_loop/mod.rs",
         "src/types/mod.rs",
         "src/gateway/mod.rs",
     ]

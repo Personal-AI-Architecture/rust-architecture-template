@@ -1,6 +1,8 @@
+mod mcp_tool_source;
 mod mock;
 mod openai_compatible;
 
+pub use mcp_tool_source::McpToolSource;
 pub use mock::MockAdapter;
 pub use openai_compatible::{OpenAiCompatibleAdapter, ProviderProfile};
 

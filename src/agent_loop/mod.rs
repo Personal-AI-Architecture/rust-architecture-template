@@ -1,4 +1,4 @@
-use crate::types::{EngineRequest, ModelAdapter, StreamEvent};
+use crate::types::{AgentLoopRequest, ModelAdapter, StreamEvent};
 use serde_json::{Map, Value};
 
 pub struct AgentLoop {
@@ -17,7 +17,11 @@ impl AgentLoop {
             context_limits,
         }
     }
-    pub fn run(&self, request: &EngineRequest, _headers: &Map<String, Value>) -> Vec<StreamEvent> {
+    pub fn run(
+        &self,
+        request: &AgentLoopRequest,
+        _headers: &Map<String, Value>,
+    ) -> Vec<StreamEvent> {
         if request.auth_context.as_object().is_some_and(|context| {
             context.keys().any(|key| {
                 !matches!(
