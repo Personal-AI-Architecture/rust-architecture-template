@@ -10,6 +10,10 @@ provider-profile routing, saved reply provenance, context limits, and notices
 for omitted complete turns. This starter's small text journey is not a full
 implementation of every PAA tool and product conformance case.
 
+The live HTTP starter currently starts the Agent Loop with an empty tool list;
+it does not load configured `tool_sources`. Tool execution and source-driven
+discovery still need implementation in a product built from this starter.
+
 This is an educational and development template. It uses a deterministic mock
 adapter by default, so the demo and tests run offline. The included
 OpenAI-compatible adapter supports HTTPS and streamed responses; add your
@@ -56,7 +60,7 @@ OpenAI-compatible profiles, put this JSON in an untracked file and set
 verified value):
 
 ```json
-{"provider_profiles":{"openrouter":{"base_url":"https://openrouter.ai/api/v1","api_key_env":"OPENROUTER_API_KEY","model_context_limits":{"your-model-id":8192}}}}
+{"provider_profiles":{"openrouter":{"base_url":"https://openrouter.ai/api/v1","api_key_env":"OPENROUTER_API_KEY","model_context_limits":{"first-model-id":8192,"second-model-id":8192}}}}
 ```
 
 Set `OPENROUTER_API_KEY` in the environment, never in that file or Memory.
@@ -71,8 +75,15 @@ curl -X PUT http://127.0.0.1:8000/owner/preferences \
   -d '{"model":"your-model-id","active_provider_profile":"openrouter"}'
 ```
 
-The next message uses the selected model and profile without a restart. An
-unknown choice produces an error instead of silently selecting a default.
+The adapter config is loaded at startup. List every model and provider profile
+you intend to select before starting; an already-loaded selection takes effect
+on the next message without a restart. Check current model IDs with the provider.
+The preference route currently stores any non-empty model and profile strings.
+An unconfigured choice is not silently replaced: the next message returns
+`503 context_limit_unknown`. Send another `PUT` with a configured selection to
+recover. A provider failure is reported as a generic `provider_error`; check
+the provider configuration and availability. A failed provider turn can leave its user
+message saved without an assistant reply.
 
 ## Validate the template
 
@@ -82,13 +93,19 @@ and restart persistence):
 
 ```bash
 node ../paa-conformance-validator/bin/paa-live-target.js --target paa.target.json
+node ../paa-conformance-validator/bin/paa-provider-target.js --target paa.target.json
 ```
+
+The direct live check against an already-running server has 11 named checks.
+The provider target starts a separate server and controlled provider for 21
+checks total, including selection and Memory/restart checks; it does not call
+a real provider.
 
 Run the complete native suite from this directory:
 
 ```bash
 cargo run --bin paa-validate \
-  -- --source-checkout ../../personal-ai-architecture \
+  -- --source-checkout /path/to/the-architecture \
   --shared-validator ../paa-conformance-validator/bin/paa-validate.js
 ```
 
