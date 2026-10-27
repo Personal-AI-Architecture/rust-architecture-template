@@ -275,17 +275,144 @@ impl Gateway {
                 ("message".into(), Value::String("Older conversation turns were omitted from this reply's working context.".into())),
             ]) });
         }
-        let text: String = stream
-            .iter()
-            .filter(|event| event.event == "text-delta")
-            .filter_map(|event| event.data.get("content").and_then(Value::as_str))
-            .collect();
+        let mut text = String::new();
+        let mut assistant_parts: Vec<Value> = Vec::new();
+        let mut tool_calls: HashMap<String, crate::types::ToolCall> = HashMap::new();
+        let mut last_message_id = String::new();
+        for event in &stream {
+            if event.event == "text-delta" {
+                if let Some(value) = event.data.get("content").and_then(Value::as_str) {
+                    text.push_str(value);
+                    if assistant_parts
+                        .last()
+                        .and_then(Value::as_object)
+                        .and_then(|part| part.get("type"))
+                        .and_then(Value::as_str)
+                        == Some("text")
+                    {
+                        if let Some(part) =
+                            assistant_parts.last_mut().and_then(Value::as_object_mut)
+                        {
+                            let current = part
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned();
+                            part.insert("text".into(), Value::String(format!("{current}{value}")));
+                        }
+                    } else {
+                        assistant_parts.push(serde_json::json!({"type":"text","text":value}));
+                    }
+                }
+            } else if event.event == "tool-call" {
+                let id = event
+                    .data
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let name = event
+                    .data
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let source_id = event
+                    .data
+                    .get("source_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("internal")
+                    .to_owned();
+                let arguments = event
+                    .data
+                    .get("arguments")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                if !id.is_empty() && !name.is_empty() {
+                    tool_calls.insert(
+                        id.clone(),
+                        crate::types::ToolCall {
+                            id: id.clone(),
+                            source_id: source_id.clone(),
+                            name: name.clone(),
+                            arguments: arguments.clone(),
+                            ..Default::default()
+                        },
+                    );
+                    assistant_parts.push(serde_json::json!({"type":"tool_call","id":id,"source_id":source_id,"name":name,"arguments":arguments}));
+                }
+            } else if event.event == "tool-result" {
+                if !assistant_parts.is_empty() || !tool_calls.is_empty() {
+                    let calls = tool_calls.values().cloned().collect();
+                    last_message_id = self.append(
+                        &conversation_id,
+                        Message {
+                            role: "assistant".into(),
+                            content: assistant_parts.clone(),
+                            tool_calls: calls,
+                            ..Default::default()
+                        },
+                        Some(Map::from_iter([
+                            ("model".into(), Value::String(self.current_model.clone())),
+                            (
+                                "provider".into(),
+                                Value::String(self.current_provider.clone()),
+                            ),
+                        ])),
+                    );
+                    assistant_parts.clear();
+                    tool_calls.clear();
+                }
+                let id = event
+                    .data
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !id.is_empty() {
+                    let is_error = event
+                        .data
+                        .get("error")
+                        .is_some_and(|value| !value.as_str().unwrap_or_default().is_empty());
+                    let result = if is_error {
+                        event.data.get("error").cloned().unwrap_or(Value::Null)
+                    } else {
+                        match event.data.get("output") {
+                            Some(Value::String(output)) => serde_json::from_str(output)
+                                .unwrap_or_else(|_| Value::String(output.clone())),
+                            Some(output) => output.clone(),
+                            None => Value::String(String::new()),
+                        }
+                    };
+                    last_message_id = self.append(&conversation_id, Message { role: "tool".into(), tool_call_id: id.into(), content: vec![serde_json::json!({"type":"tool_result","tool_call_id":id,"result":result,"is_error":is_error})], ..Default::default() }, None);
+                }
+            }
+        }
         if let Some(done) = stream.iter_mut().find(|event| event.event == "done") {
             done.data
                 .entry("finish_reason")
                 .or_insert_with(|| Value::String("stop".into()));
         }
         if stream.iter().any(|event| event.event == "done") {
+            if !assistant_parts.is_empty() || !tool_calls.is_empty() {
+                let calls = tool_calls.values().cloned().collect();
+                last_message_id = self.append(
+                    &conversation_id,
+                    Message {
+                        role: "assistant".into(),
+                        content: assistant_parts.clone(),
+                        tool_calls: calls,
+                        ..Default::default()
+                    },
+                    Some(Map::from_iter([
+                        ("model".into(), Value::String(self.current_model.clone())),
+                        (
+                            "provider".into(),
+                            Value::String(self.current_provider.clone()),
+                        ),
+                    ])),
+                );
+            }
             let provenance = Map::from_iter([
                 ("model".into(), Value::String(self.current_model.clone())),
                 (
@@ -293,15 +420,19 @@ impl Gateway {
                     Value::String(self.current_provider.clone()),
                 ),
             ]);
-            let message_id = self.append(
-                &conversation_id,
-                Message {
-                    role: "assistant".into(),
-                    content: vec![serde_json::json!({"type":"text","text":text})],
-                    ..Default::default()
-                },
-                Some(provenance),
-            );
+            let message_id = if last_message_id.is_empty() {
+                self.append(
+                    &conversation_id,
+                    Message {
+                        role: "assistant".into(),
+                        content: vec![serde_json::json!({"type":"text","text":text})],
+                        ..Default::default()
+                    },
+                    Some(provenance),
+                )
+            } else {
+                last_message_id.clone()
+            };
             if let Some(done) = stream.iter_mut().find(|event| event.event == "done") {
                 done.data
                     .insert("message_id".into(), Value::String(message_id));
