@@ -1,6 +1,53 @@
 use crate::types::{AgentLoopRequest, ModelAdapter, StreamEvent};
 use serde_json::{Map, Value};
 
+fn source_id_for_tool(name: &str, tools: &[crate::types::ToolDefinition]) -> String {
+    for tool in tools {
+        if tool.name == name {
+            if let Some(source_id) = tool.source.get("id").and_then(Value::as_str) {
+                if !source_id.trim().is_empty() {
+                    return source_id.trim().to_owned();
+                }
+            }
+        }
+    }
+    let name = name.trim();
+    let prefix: String = name
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric())
+        .collect();
+    if name
+        .as_bytes()
+        .get(prefix.len())
+        .is_some_and(|character| matches!(character, b'_' | b':' | b'-'))
+        && !prefix.is_empty()
+    {
+        return prefix;
+    }
+    "internal".into()
+}
+
+fn tool_arguments(delta: &Map<String, Value>) -> Map<String, Value> {
+    let value = delta.get("arguments").or_else(|| {
+        delta
+            .get("function")
+            .and_then(Value::as_object)
+            .and_then(|function| function.get("arguments"))
+    });
+    match value {
+        Some(Value::Object(arguments)) => arguments.clone(),
+        Some(Value::String(encoded)) => serde_json::from_str(encoded).unwrap_or_default(),
+        _ => Map::new(),
+    }
+}
+
+fn serialize_tool_output(value: &Value) -> String {
+    match value {
+        Value::String(output) => output.clone(),
+        _ => serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".into()),
+    }
+}
+
 pub struct AgentLoop {
     pub adapter: Box<dyn ModelAdapter>,
     pub tools: Vec<crate::types::ToolDefinition>,
@@ -115,10 +162,40 @@ impl AgentLoop {
                                 data: d,
                             }
                         }),
-                    "tool-call" | "tool-result" => Some(StreamEvent {
-                        event: chunk.chunk_type,
-                        data,
-                    }),
+                    "tool-call" => {
+                        let name = data
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .or_else(|| {
+                                data.get("function")
+                                    .and_then(Value::as_object)
+                                    .and_then(|function| function.get("name"))
+                                    .and_then(Value::as_str)
+                            })
+                            .unwrap_or_default()
+                            .to_owned();
+                        data.insert("name".into(), Value::String(name.clone()));
+                        data.entry("source_id").or_insert_with(|| {
+                            Value::String(source_id_for_tool(&name, &self.tools))
+                        });
+                        data.insert("arguments".into(), Value::Object(tool_arguments(&data)));
+                        Some(StreamEvent {
+                            event: "tool-call".into(),
+                            data,
+                        })
+                    }
+                    "tool-result" => {
+                        if let Some(output) = data.get("output").cloned() {
+                            data.insert(
+                                "output".into(),
+                                Value::String(serialize_tool_output(&output)),
+                            );
+                        }
+                        Some(StreamEvent {
+                            event: "tool-result".into(),
+                            data,
+                        })
+                    }
                     "error" => Some(safe_model_error(&data)),
                     "done" => {
                         if !data.contains_key("finish_reason") {

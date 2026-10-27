@@ -6,6 +6,8 @@ pub mod context;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
+    #[serde(default)]
+    pub source_id: String,
     pub name: String,
     #[serde(default)]
     pub arguments: Map<String, Value>,
